@@ -502,6 +502,54 @@ async def show_history(callback: CallbackQuery):
             
     await callback.message.edit_text(text)
 
+# ================= СТАРТ И ПОМОЩЬ =================
+@admin_router.message(Command("start"))
+async def cmd_start(message: Message):
+    text = (
+        "🎰 <b>Добро пожаловать в Лотерею!</b>\n\n"
+        "📋 <b>Доступные команды:</b>\n"
+        "• /newlottery - Создать новую лотерею (только в ЛС)\n"
+        "• /account - Посмотреть свой аккаунт\n\n"
+        "💡 <b>Как создать лотерею:</b>\n"
+        "1. Напиши мне в личные сообщения\n"
+        "2. Отправь команду /newlottery\n"
+        "3. Следуй инструкциям\n"
+        "4. Укажи канал для публикации (бот должен быть там админом)\n\n"
+        "🎉 Удачи!"
+    )
+    await message.answer(text)
+
+
+@admin_router.message(Command("help"))
+async def cmd_help(message: Message):
+    text = (
+        "📖 <b>Помощь по боту</b>\n\n"
+        "<b>Для организаторов:</b>\n"
+        "• /newlottery - создать лотерею\n"
+        "• /account - ваш аккаунт и баланс\n\n"
+        "<b>Для участников:</b>\n"
+        "• Просто нажимайте на кнопки с билетами в лотереях\n"
+        "• /account - проверить свой баланс и историю\n\n"
+        "<b>Важно:</b>\n"
+        "• Создание лотереи работает только в личных сообщениях\n"
+        "• Бот должен быть администратором канала для публикации\n"
+        "• Для платных лотерей нужен внутренний баланс Stars"
+    )
+    await message.answer(text)
+
+
+# Обработчик для всех текстовых сообщений (если не команда)
+@admin_router.message(F.text & ~F.text.startswith('/'))
+async def handle_text(message: Message):
+    await message.answer(
+        "🤔 Я не понимаю это сообщение.\n\n"
+        "Используйте команды:\n"
+        "• /start - начало работы\n"
+        "• /newlottery - создать лотерею (в ЛС)\n"
+        "• /account - ваш аккаунт\n"
+        "• /help - помощь"
+    )
+
 
 async def main():
     init_db()
