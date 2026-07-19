@@ -70,7 +70,7 @@ class Lottery(Base):
     __tablename__ = "lotteries"
     id = Column(Integer, primary_key=True)
     message_id = Column(BigInteger, nullable=True)
-    chat_id = Column(String, nullable=True) # String для поддержки @username и -100...
+    chat_id = Column(String, nullable=True)
     organizer_id = Column(BigInteger, ForeignKey("users.id"))
     title = Column(String)
     total_tickets = Column(Integer)
@@ -105,7 +105,7 @@ class Withdrawal(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(BigInteger, ForeignKey("users.id"))
     amount = Column(Float)
-    status = Column(String, default="pending") # pending, approved, rejected
+    status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -116,8 +116,8 @@ class CreateLottery(StatesGroup):
     winners_count = State()
     price = State()
     conditions = State()
-    sub_channel = State()      # Если нужна подписка
-    publish_channel = State()  # Канал для публикации
+    sub_channel = State()
+    publish_channel = State()
 
 
 # ================= РОУТЕРЫ =================
@@ -224,7 +224,6 @@ async def process_sub_channel(message: Message, state: FSMContext):
         await message.answer("⚠️ Username должен начинаться с @")
         return
     
-    # Проверка, что бот там есть
     try:
         bot_info = await message.bot.get_chat_member(channel, message.bot.id)
         if bot_info.status in ["left", "kicked"]:
@@ -277,7 +276,7 @@ async def process_publish_channel(message: Message, state: FSMContext, bot: Bot)
             subscription_chat_id=conditions.get('sub_chat_id')
         )
         session.add(lottery)
-        session.flush() # Получаем lottery.id
+        session.flush()
 
         for i in range(1, total + 1):
             session.add(Ticket(lottery_id=lottery.id, number=i))
@@ -285,7 +284,6 @@ async def process_publish_channel(message: Message, state: FSMContext, bot: Bot)
         session.commit()
         lottery_id = lottery.id
 
-    # Формируем кнопки
     buttons = []
     row = []
     for i in range(1, total + 1):
@@ -298,7 +296,6 @@ async def process_publish_channel(message: Message, state: FSMContext, bot: Bot)
 
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     
-    # ✅ ИСПРАВЛЕНИЕ: выносим логику цены в переменную, чтобы избежать \ внутри f-строки
     price_text = "Бесплатно" if data['price'] == 0 else f"{int(data['price'])} Stars"
     
     text = (
@@ -315,7 +312,6 @@ async def process_publish_channel(message: Message, state: FSMContext, bot: Bot)
         text += f"📢 Требуется подписка на {conditions.get('sub_chat_id')}\n"
     text += "\n👇 <b>Выбери билет и испытай удачу!</b>"
 
-    # Публикуем в канал
     try:
         sent_msg = await bot.send_message(chat_id=channel, text=text, reply_markup=kb)
         
@@ -334,7 +330,6 @@ async def process_publish_channel(message: Message, state: FSMContext, bot: Bot)
         await message.answer("❌ Произошла ошибка при публикации. Проверьте логи.")
 
 
-# ================= УЧАСТИЕ В ЛОТЕРЕЕ =================
 @lottery_router.callback_query(F.data.startswith(f"{CB_PREFIX}:ticket:"))
 async def pick_ticket(callback: CallbackQuery, bot: Bot):
     parts = callback.data.split(":")
@@ -353,12 +348,10 @@ async def pick_ticket(callback: CallbackQuery, bot: Bot):
             session.add(user)
             session.flush()
 
-        # 1. Проверка Premium
         if lottery.require_premium and not callback.from_user.is_premium:
             await callback.answer("⚠️ Для участия в этой лотерее нужен Telegram Premium!", show_alert=True)
             return
 
-        # 2. Проверка подписки
         if lottery.require_subscription and lottery.subscription_chat_id:
             try:
                 member = await bot.get_chat_member(lottery.subscription_chat_id, callback.from_user.id)
@@ -369,34 +362,28 @@ async def pick_ticket(callback: CallbackQuery, bot: Bot):
                 await callback.answer("⚠️ Ошибка проверки подписки. Возможно, бота удалили из канала.", show_alert=True)
                 return
 
-        # 3. Проверка, не брал ли уже билет
         existing = session.query(Ticket).filter_by(lottery_id=lottery_id, user_id=callback.from_user.id).first()
         if existing:
             await callback.answer("⚠️ Ты уже выбирал билет в этой лотерее!", show_alert=True)
             return
 
-        # 4. Проверка, свободен ли билет
         ticket = session.query(Ticket).filter_by(lottery_id=lottery_id, number=ticket_num).first()
         if ticket.is_picked:
             await callback.answer("⚠️ Этот билет уже занят другим участником!", show_alert=True)
             return
 
-        # 5. Оплата (Внутренний баланс Stars)
         if lottery.price_stars > 0:
             if user.balance_stars < lottery.price_stars:
                 await callback.answer(f"⚠️ Недостаточно Stars на балансе! Нужно {lottery.price_stars}, у тебя {user.balance_stars}", show_alert=True)
                 return
             
-            # Списание у участника
             user.balance_stars -= lottery.price_stars
             user.total_spent += lottery.price_stars
             
-            # Начисление организатору
             org = session.query(User).filter_by(id=lottery.organizer_id).first()
             if org:
                 org.balance_stars += lottery.price_stars
 
-        # 6. Фиксация билета
         ticket.user_id = callback.from_user.id
         ticket.is_picked = True
         ticket.picked_at = datetime.utcnow()
@@ -410,7 +397,6 @@ async def pick_ticket(callback: CallbackQuery, bot: Bot):
             
         session.commit()
 
-    # Обновляем кнопки вне сессии, чтобы не держать её открытой во время сетевого запроса
     await update_lottery_buttons(bot, lottery)
     
     if is_winner:
@@ -437,7 +423,6 @@ async def update_lottery_buttons(bot: Bot, lottery: Lottery):
         else:
             text = f"#{t.number}"
         
-        # Если лотерея неактивна или билет занят, убираем callback_data, чтобы нельзя было нажать
         cb_data = f"{CB_PREFIX}:ticket:{lottery.id}:{t.number}" if not t.is_picked and lottery.is_active else None
         row.append(InlineKeyboardButton(text=text, callback_data=cb_data))
         
@@ -452,10 +437,9 @@ async def update_lottery_buttons(bot: Bot, lottery: Lottery):
     try:
         await bot.edit_message_reply_markup(chat_id=lottery.chat_id, message_id=lottery.message_id, reply_markup=kb)
     except TelegramBadRequest:
-        pass # Игнорируем ошибки, если сообщение было удалено или не изменено
+        pass
 
 
-# ================= АККАУНТ =================
 @account_router.message(Command("account"))
 async def cmd_account(message: Message):
     with get_session() as session:
@@ -491,11 +475,9 @@ async def withdraw_stars(callback: CallbackQuery):
             await callback.answer("⚠️ Минимум 10 Stars для вывода", show_alert=True)
             return
 
-        # Создаем заявку на вывод и списываем баланс
-        user.balance_stars -= 10 # Или user.balance_stars, если выводим всё
+        user.balance_stars -= 10
         withdrawal = Withdrawal(user_id=user.id, amount=10, status="pending")
         session.add(withdrawal)
-        # session.commit() происходит автоматически в contextmanager
 
     await callback.message.answer(
         f"✅ <b>Заявка на вывод создана!</b>\n\n"
@@ -521,7 +503,6 @@ async def show_history(callback: CallbackQuery):
     await callback.message.edit_text(text)
 
 
-# ================= ЗАПУСК =================
 async def main():
     init_db()
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -529,19 +510,8 @@ async def main():
     dp.include_routers(admin_router, lottery_router, account_router)
     
     logger.info("Бот запущен...")
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    async def main():
-    init_db()
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher()
-    dp.include_routers(admin_router, lottery_router, account_router)
-    
-    logger.info("Бот запущен...")
-    # ✅ ДОБАВЛЕНО: drop_pending_updates=True
     await dp.start_polling(bot, drop_pending_updates=True)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
