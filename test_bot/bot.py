@@ -1,4 +1,3 @@
-# bot.py
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -9,7 +8,8 @@ import random
 import json
 from datetime import datetime
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
+from aiogram.client.default import DefaultBotProperties
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -19,7 +19,7 @@ from sqlalchemy import create_engine, Column, Integer, BigInteger, String, Boole
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8838134787:AAEyBkhhFthT4Tfp5o_YM47BiVyzfqQ8Y4g")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 MIN_TICKETS = 5
 MAX_TICKETS = 100
 MAX_WINNERS = 100
@@ -103,14 +103,14 @@ async def cmd_new_lottery(message: Message, state: FSMContext):
     if message.chat.type != "private":
         return
     await state.set_state(CreateLottery.title)
-    await message.answer("<b>Создание лотереи</b>\n\nВведи название розыгрыша:", parse_mode="HTML")
+    await message.answer("<b>Создание лотереи</b>\n\nВведи название розыгрыша:")
 
 
 @admin_router.message(CreateLottery.title)
 async def process_title(message: Message, state: FSMContext):
     await state.update_data(title=message.text)
     await state.set_state(CreateLottery.tickets_count)
-    await message.answer(f"Название: <b>{message.text}</b>\n\nСколько билетов? (от {MIN_TICKETS} до {MAX_TICKETS})", parse_mode="HTML")
+    await message.answer(f"Название: <b>{message.text}</b>\n\nСколько билетов? (от {MIN_TICKETS} до {MAX_TICKETS})")
 
 
 @admin_router.message(CreateLottery.tickets_count)
@@ -124,7 +124,7 @@ async def process_tickets(message: Message, state: FSMContext):
         return
     await state.update_data(tickets_count=count)
     await state.set_state(CreateLottery.winners_count)
-    await message.answer(f"Билетов: <b>{count}</b>\n\nСколько победителей? (от 1 до {min(count, MAX_WINNERS)})", parse_mode="HTML")
+    await message.answer(f"Билетов: <b>{count}</b>\n\nСколько победителей? (от 1 до {min(count, MAX_WINNERS)})")
 
 
 @admin_router.message(CreateLottery.winners_count)
@@ -230,8 +230,7 @@ async def process_conditions(callback: CallbackQuery, state: FSMContext, bot: Bo
     if conditions['subscription']:
         text += "Требуется <b>подписка</b>\n"
     text += "\nВыбери билет и испытай удачу!"
-    await callback.message.edit_text("Лотерея создана! Отправь этот пост в канал:\n\n" + f"<code>/publish_{lottery_id}</code>", parse_mode="HTML")
-    await state.update_data(publish_text=text, publish_kb=kb)
+    await callback.message.edit_text("Лотерея создана! Отправь этот пост в канал:\n\n" + f"<code>/publish_{lottery_id}</code>")
 
 
 @lottery_router.callback_query(F.data.startswith(f"{CB_PREFIX}:ticket:"))
@@ -292,8 +291,7 @@ async def pick_ticket(callback: CallbackQuery, bot: Bot):
     if is_winner:
         await callback.answer("ПОБЕДА! Ты выбрал выигрышный билет!", show_alert=True)
         await callback.message.reply(
-            f"<b>Победитель!</b>\nПользователь {callback.from_user.mention_html()} выбрал билет #{ticket_num}\nЛотерея: {lottery.title}",
-            parse_mode="HTML"
+            f"<b>Победитель!</b>\nПользователь {callback.from_user.mention_html()} выбрал билет #{ticket_num}\nЛотерея: {lottery.title}"
         )
     else:
         await callback.answer("Промах... Попробуй в другой раз!", show_alert=True)
@@ -349,7 +347,7 @@ async def cmd_account(message: Message):
         [InlineKeyboardButton(text="Вывести Stars", callback_data=f"{CB_PREFIX}:withdraw")],
         [InlineKeyboardButton(text="История", callback_data=f"{CB_PREFIX}:history")]
     ])
-    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await message.answer(text, reply_markup=kb)
     session.close()
 
 
@@ -365,8 +363,7 @@ async def withdraw_stars(callback: CallbackQuery):
         f"<b>Запрос на вывод</b>\n\n"
         f"Доступно: <b>{user.balance_stars:.1f} Stars</b>\n"
         f"Минимум: <b>10 Stars</b>\n\n"
-        f"Напиши @admin для вывода средств.",
-        parse_mode="HTML"
+        f"Напиши @admin для вывода средств."
     )
     session.close()
 
@@ -383,13 +380,13 @@ async def show_history(callback: CallbackQuery):
     for t in tickets:
         status = "ПОБЕДА" if t.is_winner else "Промах"
         text += f"#{t.number} — {status} | Лотерея #{t.lottery_id}\n"
-    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.message.edit_text(text)
     session.close()
 
 
 async def main():
     init_db()
-    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     dp.include_routers(admin_router, lottery_router, account_router)
     await dp.start_polling(bot)
