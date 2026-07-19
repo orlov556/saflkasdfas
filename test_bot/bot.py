@@ -1,6 +1,6 @@
 import sys
 import os
-import html # Добавлено для безопасного экранирования HTML
+import html
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import asyncio
@@ -25,7 +25,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН_ЗДЕСЬ")
 CB_PREFIX = "lot"
-ADMIN_CHAT_LINK = "https://t.me/your_admin_chat" # ЗАМЕНИТЕ НА ССЫЛКУ ВАШЕГО ЧАТА
+ADMIN_CHAT_LINK = "https://t.me/your_admin_chat"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -132,9 +132,8 @@ class CreateLottery(StatesGroup):
 
 
 # ================= РОУТЕРЫ =================
-admin_router = Router()
+main_router = Router()
 lottery_router = Router()
-account_router = Router()
 
 
 # ================= УТИЛИТЫ =================
@@ -148,7 +147,6 @@ def get_or_create_user(session, user_id, username=None, first_name=None):
 
 
 async def send_lottery_message(bot: Bot, lottery_id: int, is_edit: bool = False, message_id: int = None, chat_id: str = None):
-    """Безопасная отправка/обновление сообщения лотереи внутри активной сессии"""
     with get_session() as session:
         lottery = session.query(Lottery).filter_by(id=lottery_id).first()
         if not lottery:
@@ -156,14 +154,13 @@ async def send_lottery_message(bot: Bot, lottery_id: int, is_edit: bool = False,
             
         tickets = session.query(Ticket).filter_by(lottery_id=lottery.id).all()
         
-        # Экранируем пользовательский ввод для безопасности HTML
         safe_title = html.escape(lottery.title)
         safe_channel = html.escape(lottery.channel_username or "Не указан")
         
         text = (
-            f"🎉 <b>{safe_title}</b>\n\n"
+            f" <b>{safe_title}</b>\n\n"
             f"🎟 Билетов: <b>{lottery.total_tickets}</b>\n"
-            f"🏆 Победителей: <b>{lottery.winners_count}</b>\n"
+            f" Победителей: <b>{lottery.winners_count}</b>\n"
             f"💰 Цена: <b>{'Бесплатно' if lottery.price_stars == 0 else f'{int(lottery.price_stars)} Stars'}</b>\n"
             f"🔔 Канал: <b>{safe_channel}</b>\n\n"
             f"👇 <b>Выбери билет и испытай удачу!</b>"
@@ -215,26 +212,11 @@ async def send_lottery_message(bot: Bot, lottery_id: int, is_edit: bool = False,
             return None
 
 
-# ================= /start и /help =================
-@admin_router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
-    args = message.text.split()
+# ================= /start =================
+@main_router.message(CommandStart())
+async def cmd_start(message: Message):
     with get_session() as session:
         user = get_or_create_user(session, message.from_user.id, message.from_user.username, message.from_user.first_name)
-        
-        if len(args) > 1 and args[1].startswith("ref_"):
-            try:
-                ref_id = int(args[1].split("_")[1])
-                if ref_id != message.from_user.id and user.referred_by is None:
-                    user.referred_by = ref_id
-                    referrer = session.query(User).filter_by(id=ref_id).first()
-                    if referrer and referrer.notify_referrals:
-                        try:
-                            await message.bot.send_message(ref_id, f"🎉 <b>Новый реферал!</b>\n\nПользователь {message.from_user.mention_html()} присоединился по вашей ссылке!")
-                        except Exception:
-                            pass
-            except (ValueError, IndexError):
-                pass
         session.commit()
 
     me = await message.bot.get_me()
@@ -244,28 +226,131 @@ async def cmd_start(message: Message, state: FSMContext):
         "• /newlottery — создать лотерею\n"
         "• /account — ваш аккаунт\n"
         "• /help — помощь\n\n"
-        f"🔗 <b>Ваша реферальная ссылка:</b>\n"
+        f" <b>Ваша реферальная ссылка:</b>\n"
         f"<code>https://t.me/{me.username}?start=ref_{message.from_user.id}</code>"
     )
     await message.answer(text)
 
 
-@admin_router.message(Command("help"))
+@main_router.message(Command("help"))
 async def cmd_help(message: Message):
-    text = "📖 <b>Помощь</b>\n\nИспользуйте /newlottery для создания и /account для управления профилем."
+    text = "📖 <b>Помощь</b>\n\n• /newlottery — создать лотерею\n• /account — ваш аккаунт"
     await message.answer(text)
 
 
-# ================= СОЗДАНИЕ ЛОТЕРЕИ (сокращено для краткости, логика та же) =================
-@admin_router.message(Command("newlottery"))
+# ================= /account - ИСПРАВЛЕНО ОКОНЧАТЕЛЬНО =================
+@main_router.message(Command("account"))
+async def cmd_account(message: Message):
+    try:
+        with get_session() as session:
+            user = get_or_create_user(session, message.from_user.id, message.from_user.username, message.from_user.first_name)
+            session.commit()
+            
+            total_tickets = session.query(Ticket).filter_by(user_id=user.id).count()
+            won_tickets = session.query(Ticket).filter_by(user_id=user.id, is_winner=True).count()
+            referrals_count = session.query(User).filter_by(referred_by=user.id).count()
+
+        is_premium = "✅ Premium" if getattr(message.from_user, 'is_premium', False) else "❌ Нет"
+        reg_date = user.created_at.strftime("%d.%m.%Y %H:%M") if user.created_at else "Неизвестно"
+
+        text = (
+            f"👤 <b>Ваш аккаунт:</b>\n\n"
+            f"⚡ Подписка » {is_premium}\n\n"
+            f"👤 UUID » <code>{user.id}</code>\n"
+            f"  ⤷ Регистрация » <code>{reg_date}</code>\n\n"
+            f"🏦 <b>Балансы:</b>\n"
+            f"  ⤷ Звёзды » <b>{user.balance_stars:.2f}</b> | Удержание » <b>0.00</b>\n"
+            f"   Доллары » <b>$0.00</b>\n"
+            f"   Гемы » <b>0</b>\n\n"
+            f"⭐️ История трат звёзд: <b>{user.total_spent:.2f}</b>\n\n"
+            f"💬 <a href='{ADMIN_CHAT_LINK}'>Присоединяйтесь к админскому чату бота</a>.\n\n"
+            f"📖 <b>Управление аккаунтом:</b>"
+        )
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💸 Вывести Stars", callback_data=f"{CB_PREFIX}:withdraw")],
+            [InlineKeyboardButton(text="📜 История", callback_data=f"{CB_PREFIX}:history")],
+            [InlineKeyboardButton(text="🔗 Рефералы", callback_data=f"{CB_PREFIX}:reflink")],
+            [InlineKeyboardButton(text="⚙️ Настройки", callback_data=f"{CB_PREFIX}:settings")]
+        ])
+        await message.answer(text, reply_markup=kb, disable_web_page_preview=True)
+    except Exception as e:
+        logger.error(f"Account error: {e}")
+        await message.answer("⚠️ Ошибка при загрузке аккаунта. Попробуйте позже.")
+
+
+# Callbacks для account
+@main_router.callback_query(F.data == f"{CB_PREFIX}:withdraw")
+async def withdraw_stars(callback: CallbackQuery):
+    with get_session() as session:
+        user = session.query(User).filter_by(id=callback.from_user.id).first()
+        if not user or user.balance_stars < 10:
+            await callback.answer("⚠️ Минимум 10 Stars для вывода", show_alert=True)
+            return
+        user.balance_stars -= 10
+        session.add(Withdrawal(user_id=user.id, amount=10, status="pending"))
+    await callback.message.answer("✅ Заявка на вывод 10 Stars создана!")
+
+
+@main_router.callback_query(F.data == f"{CB_PREFIX}:history")
+async def show_history(callback: CallbackQuery):
+    with get_session() as session:
+        tickets = session.query(Ticket).filter_by(user_id=callback.from_user.id).order_by(Ticket.picked_at.desc()).limit(10).all()
+        if not tickets:
+            await callback.answer("📜 История пуста", show_alert=True)
+            return
+        text = "<b>Последние 10 билетов:</b>\n\n"
+        for t in tickets:
+            status = "🟢 ПОБЕДА" if t.is_winner else "🔴 Промах"
+            text += f"🎟 #{t.number} — {status} | Лотерея #{t.lottery_id}\n"
+    await callback.message.edit_text(text)
+
+
+@main_router.callback_query(F.data == f"{CB_PREFIX}:reflink")
+async def show_reflink(callback: CallbackQuery):
+    me = await callback.bot.get_me()
+    link = f"https://t.me/{me.username}?start=ref_{callback.from_user.id}"
+    await callback.message.answer(f" <b>Ваша реферальная ссылка:</b>\n\n<code>{link}</code>")
+
+
+@main_router.callback_query(F.data == f"{CB_PREFIX}:settings")
+async def show_settings(callback: CallbackQuery):
+    with get_session() as session:
+        user = session.query(User).filter_by(id=callback.from_user.id).first()
+        notify = user.notify_referrals if user else True
+    notify_text = "✅ Вкл" if notify else "❌ Выкл"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🔔 Уведомления: {notify_text}", callback_data=f"{CB_PREFIX}:toggle_notify")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"{CB_PREFIX}:back_to_account")]
+    ])
+    await callback.message.edit_text("⚙️ <b>Настройки</b>", reply_markup=kb)
+
+
+@main_router.callback_query(F.data == f"{CB_PREFIX}:toggle_notify")
+async def toggle_notify(callback: CallbackQuery):
+    with get_session() as session:
+        user = session.query(User).filter_by(id=callback.from_user.id).first()
+        user.notify_referrals = not user.notify_referrals
+    await callback.answer("✅ Обновлено")
+    await show_settings(callback)
+
+
+@main_router.callback_query(F.data == f"{CB_PREFIX}:back_to_account")
+async def back_to_account(callback: CallbackQuery):
+    await cmd_account(callback.message)
+
+
+# ================= СОЗДАНИЕ ЛОТЕРЕИ =================
+@main_router.message(Command("newlottery"))
 async def cmd_new_lottery(message: Message, state: FSMContext):
     if message.chat.type != "private":
-        await message.answer("⚠️ Создание лотереи доступно только в личных сообщениях!")
+        await message.answer("⚠️ Только в ЛС!")
         return
     await state.set_state(CreateLottery.text)
-    await message.answer("✏️ <b>Отправьте текст лотереи:</b>\n\n📖 Можно прикрепить фото, видео, GIF и даже музыку.")
+    await message.answer("✏️ <b>Отправьте текст лотереи:</b>\n\n Можно прикрепить фото, видео, GIF.")
 
-@admin_router.message(CreateLottery.text)
+
+@main_router.message(CreateLottery.text)
 async def process_text(message: Message, state: FSMContext):
     media_type = None
     file_id = None
@@ -278,7 +363,7 @@ async def process_text(message: Message, state: FSMContext):
     elif message.document: media_type, file_id = "document", message.document.file_id
     
     if not caption and not media_type:
-        await message.answer("⚠️ Отправьте текст или медиа с подписью")
+        await message.answer("⚠️ Отправьте текст или медиа!")
         return
     
     await state.update_data(title=caption or "Лотерея", media_type=media_type, media_file_id=file_id)
@@ -292,40 +377,63 @@ async def process_text(message: Message, state: FSMContext):
             buttons.append(row)
             row = []
     if row: buttons.append(row)
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"{CB_PREFIX}:back:text"), InlineKeyboardButton(text="🗑 Удалить", callback_data=f"{CB_PREFIX}:cancel")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"{CB_PREFIX}:back:text"), 
+                    InlineKeyboardButton(text=" Удалить", callback_data=f"{CB_PREFIX}:cancel")])
     
-    await message.answer("🎟 <b>Хорошо, теперь выберите количество билетов в лотерее:</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await message.answer(" <b>Выберите количество билетов:</b>", 
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
-# (Остальные хендлеры создания лотереи остаются такими же, как в предыдущем коде, они работают корректно. 
-# Для экономии места я сосредоточился на исправлении критических ошибок и команды /account)
-@admin_router.callback_query(F.data.startswith(f"{CB_PREFIX}:tickets:"))
+
+@main_router.callback_query(F.data.startswith(f"{CB_PREFIX}:tickets:"))
 async def process_tickets_count(callback: CallbackQuery, state: FSMContext):
     count = int(callback.data.split(":")[-1])
     await state.update_data(tickets_count=count)
     await state.set_state(CreateLottery.winners_count)
-    max_w = min(10, count)
-    buttons = [[InlineKeyboardButton(text=str(i), callback_data=f"{CB_PREFIX}:winners:{i}")] for i in range(1, max_w + 1)]
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"{CB_PREFIX}:back:tickets"), InlineKeyboardButton(text="🗑 Удалить", callback_data=f"{CB_PREFIX}:cancel")])
-    await callback.message.edit_text(f"⭐️ <b>Отлично, теперь укажите количество победителей в лотерее (от 1 до {max_w}):</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    
+    # КАК НА СКРИНШОТЕ - ОДНА КНОПКА "По умолчанию: 1"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="По умолчанию: 1", callback_data=f"{CB_PREFIX}:winners:1")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"{CB_PREFIX}:back:tickets"), 
+         InlineKeyboardButton(text="Удалить", callback_data=f"{CB_PREFIX}:cancel")]
+    ])
+    
+    await callback.message.edit_text(
+        f"⭐️ <b>Отлично, теперь укажите количество победителей в лотерее (от 1 до {min(count, 100)}):</b>",
+        reply_markup=kb
+    )
 
-@admin_router.callback_query(F.data.startswith(f"{CB_PREFIX}:winners:"))
+
+@main_router.callback_query(F.data.startswith(f"{CB_PREFIX}:winners:"))
 async def process_winners_count(callback: CallbackQuery, state: FSMContext):
     count = int(callback.data.split(":")[-1])
     await state.update_data(winners_count=count)
     await state.set_state(CreateLottery.channel)
+    
     with get_session() as session:
         channels = session.query(Channel).filter_by(owner_id=callback.from_user.id).all()
         buttons = [[InlineKeyboardButton(text=f"📢 {ch.title}", callback_data=f"{CB_PREFIX}:channel:{ch.id}")] for ch in channels]
         buttons.append([InlineKeyboardButton(text="➕ Добавить канал", callback_data=f"{CB_PREFIX}:addchannel")])
-        buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"{CB_PREFIX}:back:winners"), InlineKeyboardButton(text="🗑 Удалить", callback_data=f"{CB_PREFIX}:cancel")])
-    await callback.message.edit_text("🔔 <b>Пора выбрать канал, в котором будет опубликована лотерея:</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        buttons.append([InlineKeyboardButton(text="️ Назад", callback_data=f"{CB_PREFIX}:back:winners"), 
+                        InlineKeyboardButton(text="Удалить", callback_data=f"{CB_PREFIX}:cancel")])
+    
+    await callback.message.edit_text("🔔 <b>Выберите канал для публикации:</b>", 
+                                    reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
-@admin_router.callback_query(F.data == f"{CB_PREFIX}:addchannel")
+
+@main_router.callback_query(F.data == f"{CB_PREFIX}:addchannel")
 async def add_channel_prompt(callback: CallbackQuery, state: FSMContext):
     await state.set_state(CreateLottery.add_channel)
-    await callback.message.edit_text("🔔 <b>Начнём подключение канала!</b>\n\nОтправьте @username канала или перешлите сообщение из него.\n\n💡 Бот должен быть там администратором.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data=f"{CB_PREFIX}:back:channel")]]))
+    text = (
+        " <b>Начнём подключение канала!</b>\n\n"
+        "1. Отправьте @username канала или ссылку.\n"
+        "2. Бот должен быть администратором канала.\n\n"
+        "📖 <b>Отправьте канал:</b>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data=f"{CB_PREFIX}:back:channel")]])
+    await callback.message.edit_text(text, reply_markup=kb)
 
-@admin_router.message(CreateLottery.add_channel)
+
+@main_router.message(CreateLottery.add_channel)
 async def process_add_channel(message: Message, state: FSMContext, bot: Bot):
     text = message.text.strip() if message.text else ""
     forward = message.forward_from_chat if message.forward_from_chat else None
@@ -348,10 +456,10 @@ async def process_add_channel(message: Message, state: FSMContext, bot: Bot):
     try:
         member = await bot.get_chat_member(chat_id, bot.id)
         if member.status not in ["administrator", "creator"]:
-            await message.answer("⚠️ Бот не является администратором этого канала.")
+            await message.answer("️ Бот не администратор канала!")
             return
     except TelegramBadRequest:
-        await message.answer("⚠️ Бот не найден в этом канале.")
+        await message.answer("⚠️ Бот не найден в канале.")
         return
     
     with get_session() as session:
@@ -360,10 +468,10 @@ async def process_add_channel(message: Message, state: FSMContext, bot: Bot):
     
     await message.answer(f"✅ Канал <b>{title}</b> добавлен!")
     await state.set_state(CreateLottery.channel)
-    # Возврат к выбору канала (упрощенно)
-    await cmd_new_lottery(message, state) # Перезапуск для простоты, или можно дублировать логику кнопок
+    await process_winners_count(callback, state)
 
-@admin_router.callback_query(F.data.startswith(f"{CB_PREFIX}:channel:"))
+
+@main_router.callback_query(F.data.startswith(f"{CB_PREFIX}:channel:"))
 async def process_channel_choice(callback: CallbackQuery, state: FSMContext):
     ch_id = int(callback.data.split(":")[-1])
     with get_session() as session:
@@ -375,28 +483,35 @@ async def process_channel_choice(callback: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🆓 Бесплатно", callback_data=f"{CB_PREFIX}:price:0")],
         [InlineKeyboardButton(text="⭐ 10 Stars", callback_data=f"{CB_PREFIX}:price:10")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"{CB_PREFIX}:back:channel"), InlineKeyboardButton(text="🗑 Удалить", callback_data=f"{CB_PREFIX}:cancel")]
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"{CB_PREFIX}:back:channel"), 
+         InlineKeyboardButton(text="Удалить", callback_data=f"{CB_PREFIX}:cancel")]
     ])
-    await callback.message.edit_text("💸 <b>Определим цену участия:</b>", reply_markup=kb)
+    await callback.message.edit_text("💸 <b>Выберите цену участия:</b>", reply_markup=kb)
 
-@admin_router.callback_query(F.data.startswith(f"{CB_PREFIX}:price:"))
+
+@main_router.callback_query(F.data.startswith(f"{CB_PREFIX}:price:"))
 async def process_price(callback: CallbackQuery, state: FSMContext):
     await state.update_data(price=float(callback.data.split(":")[-1]))
     await state.set_state(CreateLottery.winning_tickets)
     data = await state.get_data()
-    await callback.message.edit_text(f"🎯 <b>Введите номер выигрышного билета (от 1 до {data['tickets_count']}):</b>\nЕсли победителей несколько, через запятую (например: 3,7)")
+    await callback.message.edit_text(
+        f"🎯 <b>Введите номер выигрышного билета (1-{data['tickets_count']}):</b>\n"
+        f"Если победителей несколько — через запятую (3,7,12)"
+    )
 
-@admin_router.message(CreateLottery.winning_tickets)
+
+@main_router.message(CreateLottery.winning_tickets)
 async def process_winning_tickets(message: Message, state: FSMContext):
     data = await state.get_data()
     try:
         numbers = [int(x.strip()) for x in message.text.split(",") if x.strip().isdigit()]
         if len(numbers) != data['winners_count']:
-            await message.answer(f"⚠️ Нужно указать ровно {data['winners_count']} номер(а).")
+            await message.answer(f"⚠️ Нужно {data['winners_count']} номер(а)!")
             return
         if any(not (1 <= n <= data['tickets_count']) for n in numbers):
-            await message.answer(f"⚠️ Номера должны быть от 1 до {data['tickets_count']}")
+            await message.answer(f"⚠️ Номера должны быть 1-{data['tickets_count']}")
             return
+        
         await state.update_data(winning_numbers=numbers)
         await state.set_state(CreateLottery.preview)
         
@@ -413,19 +528,20 @@ async def process_winning_tickets(message: Message, state: FSMContext):
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Завершить создание", callback_data=f"{CB_PREFIX}:finish")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"{CB_PREFIX}:back:winning_tickets"), InlineKeyboardButton(text="🗑 Удалить", callback_data=f"{CB_PREFIX}:cancel")]
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"{CB_PREFIX}:back:winning_tickets"), 
+             InlineKeyboardButton(text="Удалить", callback_data=f"{CB_PREFIX}:cancel")]
         ])
         await message.answer(text, reply_markup=kb)
     except ValueError:
         await message.answer("⚠️ Введите числа через запятую.")
 
-@admin_router.callback_query(F.data == f"{CB_PREFIX}:finish")
+
+@main_router.callback_query(F.data == f"{CB_PREFIX}:finish")
 async def finish_lottery(callback: CallbackQuery, state: FSMContext, bot: Bot):
     data = await state.get_data()
     lottery_id = None
     
     with get_session() as session:
-        user = get_or_create_user(session, callback.from_user.id, callback.from_user.username, callback.from_user.first_name)
         lottery = Lottery(
             organizer_id=callback.from_user.id,
             title=data['title'],
@@ -448,7 +564,6 @@ async def finish_lottery(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
     if lottery_id:
         try:
-            # ИСПРАВЛЕНИЕ: передаем только ID, функция сама откроет сессию и получит данные
             sent_msg = await send_lottery_message(bot, lottery_id)
             if sent_msg:
                 with get_session() as session:
@@ -458,20 +573,22 @@ async def finish_lottery(callback: CallbackQuery, state: FSMContext, bot: Bot):
                 await state.clear()
                 await callback.message.edit_text(f"✅ <b>Лотерея создана!</b>\nID: <code>{lottery_id}</code>")
             else:
-                await callback.message.edit_text("❌ Ошибка публикации. Проверьте права бота в канале.")
+                await callback.message.edit_text("❌ Ошибка публикации.")
         except Exception as e:
             logger.error(f"Publish error: {e}")
             await callback.message.edit_text(f"❌ Ошибка: {e}")
 
-@admin_router.callback_query(F.data == f"{CB_PREFIX}:cancel")
+
+@main_router.callback_query(F.data == f"{CB_PREFIX}:cancel")
 async def cancel_creation(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text("❌ Создание отменено.")
 
-@admin_router.callback_query(F.data.startswith(f"{CB_PREFIX}:back:"))
+
+@main_router.callback_query(F.data.startswith(f"{CB_PREFIX}:back:"))
 async def go_back(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.edit_text("❌ Возврат в начало. Введите /newlottery")
+    await callback.message.edit_text("❌ Введите /newlottery для начала")
 
 
 # ================= УЧАСТИЕ В ЛОТЕРЕЕ =================
@@ -484,7 +601,7 @@ async def pick_ticket(callback: CallbackQuery, bot: Bot):
     with get_session() as session:
         lottery = session.query(Lottery).filter_by(id=lottery_id).first()
         if not lottery or not lottery.is_active:
-            await callback.answer("🚫 Лотерея завершена", show_alert=True)
+            await callback.answer("🚫 Завершена", show_alert=True)
             return
 
         user = get_or_create_user(session, callback.from_user.id, callback.from_user.username, callback.from_user.first_name)
@@ -500,7 +617,7 @@ async def pick_ticket(callback: CallbackQuery, bot: Bot):
 
         if lottery.price_stars > 0:
             if user.balance_stars < lottery.price_stars:
-                await callback.answer(f"⚠️ Нужно {lottery.price_stars} Stars, у вас {user.balance_stars}", show_alert=True)
+                await callback.answer(f"⚠️ Нужно {lottery.price_stars} Stars", show_alert=True)
                 return
             user.balance_stars -= lottery.price_stars
             user.total_spent += lottery.price_stars
@@ -518,114 +635,12 @@ async def pick_ticket(callback: CallbackQuery, bot: Bot):
         
         session.commit()
 
-    # ИСПРАВЛЕНИЕ: передаем ID, а не объект
     await send_lottery_message(bot, lottery_id, is_edit=True, message_id=lottery.message_id, chat_id=lottery.chat_id)
     
     if ticket.is_winner:
         await callback.answer("🎉 ПОБЕДА! 🟢", show_alert=True)
     else:
-        await callback.answer("😔 Промах... 🔴", show_alert=True)
-
-
-# ================= АККАУНТ (ПОЛНОСТЬЮ ПЕРЕПИСАН ПОД ВАШ ШАБЛОН) =================
-@account_router.message(Command("account", "profile"))
-async def cmd_account(message: Message):
-    with get_session() as session:
-        user = get_or_create_user(session, message.from_user.id, message.from_user.username, message.from_user.first_name)
-        session.commit()
-        
-        total_tickets = session.query(Ticket).filter_by(user_id=user.id).count()
-        won_tickets = session.query(Ticket).filter_by(user_id=user.id, is_winner=True).count()
-        referrals_count = session.query(User).filter_by(referred_by=user.id).count()
-
-    is_premium = "✅ Premium" if getattr(message.from_user, 'is_premium', False) else "❌ Нет"
-    reg_date = user.created_at.strftime("%d.%m.%Y %H:%M") if user.created_at else "Неизвестно"
-
-    # ТОЧНЫЙ ШАБЛОН, КОТОРЫЙ ВЫ ЗАПРОСИЛИ
-    text = (
-        f"👤 <b>Ваш аккаунт:</b>\n\n"
-        f"⚡ Подписка » {is_premium}\n\n"
-        f"👤 UUID » <code>{user.id}</code>\n"
-        f"  ⤷ Регистрация » <code>{reg_date}</code>\n\n"
-        f"🏦 <b>Балансы:</b>\n"
-        f"  ⤷ Звёзды » <b>{user.balance_stars:.2f}</b> | Удержание » <b>0.00</b>\n"
-        f"  ⤷ Доллары » <b>$0.00</b>\n"
-        f"  ⤷ Гемы » <b>0</b>\n\n"
-        f"⭐️ История трат звёзд: <b>{user.total_spent:.2f}</b>\n\n"
-        f"💬 <a href='{ADMIN_CHAT_LINK}'>Присоединяйтесь к админскому чату бота</a>.\n\n"
-        f"📖 <b>Управление аккаунтом:</b>"
-    )
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💸 Вывести Stars", callback_data=f"{CB_PREFIX}:withdraw")],
-        [InlineKeyboardButton(text="📜 История", callback_data=f"{CB_PREFIX}:history")],
-        [InlineKeyboardButton(text="🔗 Рефералы", callback_data=f"{CB_PREFIX}:reflink")],
-        [InlineKeyboardButton(text="⚙️ Настройки", callback_data=f"{CB_PREFIX}:settings")]
-    ])
-    await message.answer(text, reply_markup=kb, disable_web_page_preview=True)
-
-
-@account_router.callback_query(F.data == f"{CB_PREFIX}:withdraw")
-async def withdraw_stars(callback: CallbackQuery):
-    with get_session() as session:
-        user = session.query(User).filter_by(id=callback.from_user.id).first()
-        if not user or user.balance_stars < 10:
-            await callback.answer("⚠️ Минимум 10 Stars для вывода", show_alert=True)
-            return
-        user.balance_stars -= 10
-        session.add(Withdrawal(user_id=user.id, amount=10, status="pending"))
-    await callback.message.answer("✅ Заявка на вывод 10 Stars создана!")
-
-
-@account_router.callback_query(F.data == f"{CB_PREFIX}:history")
-async def show_history(callback: CallbackQuery):
-    with get_session() as session:
-        tickets = session.query(Ticket).filter_by(user_id=callback.from_user.id).order_by(Ticket.picked_at.desc()).limit(10).all()
-        if not tickets:
-            await callback.answer("📜 История пуста", show_alert=True)
-            return
-        text = "<b>Последние 10 билетов:</b>\n\n"
-        for t in tickets:
-            status = "🟢 ПОБЕДА" if t.is_winner else "🔴 Промах"
-            text += f"🎟 #{t.number} — {status} | Лотерея #{t.lottery_id}\n"
-    await callback.message.edit_text(text)
-
-
-@account_router.callback_query(F.data == f"{CB_PREFIX}:reflink")
-async def show_reflink(callback: CallbackQuery, bot: Bot):
-    me = await bot.get_me()
-    link = f"https://t.me/{me.username}?start=ref_{callback.from_user.id}"
-    await callback.message.answer(f"🔗 <b>Ваша реферальная ссылка:</b>\n\n<code>{link}</code>")
-
-
-@account_router.callback_query(F.data == f"{CB_PREFIX}:settings")
-async def show_settings(callback: CallbackQuery):
-    with get_session() as session:
-        user = session.query(User).filter_by(id=callback.from_user.id).first()
-        notify = user.notify_referrals if user else True
-    notify_text = "✅ Вкл" if notify else "❌ Выкл"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"🔔 Уведомления о рефералах: {notify_text}", callback_data=f"{CB_PREFIX}:toggle_notify")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"{CB_PREFIX}:back_to_account")]
-    ])
-    await callback.message.edit_text("⚙️ <b>Настройки</b>", reply_markup=kb)
-
-
-@account_router.callback_query(F.data == f"{CB_PREFIX}:toggle_notify")
-async def toggle_notify(callback: CallbackQuery):
-    with get_session() as session:
-        user = session.query(User).filter_by(id=callback.from_user.id).first()
-        user.notify_referrals = not user.notify_referrals
-    await callback.answer("✅ Настройки обновлены")
-    await show_settings(callback)
-
-
-@account_router.callback_query(F.data == f"{CB_PREFIX}:back_to_account")
-async def back_to_account(callback: CallbackQuery):
-    # Просто вызываем хендлер команды /account программно
-    fake_message = type('obj', (object,), {'from_user': callback.from_user, 'answer': callback.message.answer})
-    await cmd_account(fake_message)
-    await callback.answer()
+        await callback.answer(" Промах... 🔴", show_alert=True)
 
 
 # ================= ЗАПУСК =================
@@ -634,8 +649,8 @@ async def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     
-    # Важно: порядок включения роутеров
-    dp.include_routers(admin_router, lottery_router, account_router)
+    # ВАЖНО: Все роутеры добавляем
+    dp.include_routers(main_router, lottery_router)
     
     logger.info("Бот запущен...")
     await dp.start_polling(bot, drop_pending_updates=True)
