@@ -18,7 +18,7 @@ from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import create_engine, Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Float
 from sqlalchemy.orm import sessionmaker, relationship, declarative_base
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8838134787:AAEyBkhhFthT4Tfp5o_YM47BiVyzfqQ8Y4g")
 MIN_TICKETS = 5
 MAX_TICKETS = 100
 MAX_WINNERS = 100
