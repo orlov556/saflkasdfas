@@ -1,7 +1,7 @@
 # config.py
 import os
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "твой_токен_сюда")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8838134787:AAEyBkhhFthT4Tfp5o_YM47BiVyzfqQ8Y4g")
 ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(","))) if os.getenv("ADMIN_IDS") else []
 
 MIN_TICKETS = 5
