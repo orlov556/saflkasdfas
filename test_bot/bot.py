@@ -533,4 +533,15 @@ async def main():
 
 
 if __name__ == "__main__":
+    async def main():
+    init_db()
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp = Dispatcher()
+    dp.include_routers(admin_router, lottery_router, account_router)
+    
+    logger.info("Бот запущен...")
+    # ✅ ДОБАВЛЕНО: drop_pending_updates=True
+    await dp.start_polling(bot, drop_pending_updates=True)
+
+if __name__ == "__main__":
     asyncio.run(main())
