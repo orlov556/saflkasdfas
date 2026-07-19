@@ -1,4 +1,4 @@
 # requirements.txt
-aiogram==3.4.1
-SQLAlchemy==2.0.25
-python-dotenv==1.0.0
+aiogram==3.17.0
+SQLAlchemy==2.0.36
+python-dotenv==1.0.1
