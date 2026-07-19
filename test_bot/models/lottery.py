@@ -1,5 +1,4 @@
-from sqlalchemy import Column, Integer, String, BigInteger, Boolean, Text, ARRAY, Float, ForeignKey, DateTime
-from sqlalchemy.ext.mutable import MutableList
+from sqlalchemy import Column, Integer, String, BigInteger, Boolean, Text, Float, ForeignKey, DateTime, JSON
 from database import Base
 from datetime import datetime
 
@@ -9,13 +8,13 @@ class Lottery(Base):
     id = Column(Integer, primary_key=True)
     chat_id = Column(BigInteger, nullable=False)
     media_type = Column(String(20), nullable=False)
-    media_id = Column(String(255), nullable=False)
+    media_id = Column(String(255), nullable=True)
     text = Column(Text, nullable=False)
     total_tickets = Column(Integer, nullable=False)
-    winning_numbers = Column(MutableList.as_mutable(ARRAY(Integer)), nullable=False)
+    winning_numbers = Column(JSON, nullable=False)  # список чисел
     price_type = Column(String(50), default="free")
     price_amount = Column(Float, default=0.0)
-    subscriptions = Column(MutableList.as_mutable(ARRAY(String)), default=[])
+    subscriptions = Column(JSON, default=list)      # список строк
     premium_only = Column(Boolean, default=False)
     boost_enabled = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
